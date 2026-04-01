@@ -1,0 +1,29 @@
+# Dependencias
+node_modules/
+
+# Variaveis de ambiente — NUNCA commitar o .env real
+.env
+.env.local
+.env.production
+.env.*.local
+
+# Build do frontend
+frontend/dist/
+frontend/build/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Sistema
+.DS_Store
+Thumbs.db
+*.tmp
+
+# Playwright
+playwright-report/
+test-results/
+
+# Editor
+.vscode/settings.json
+.idea/
