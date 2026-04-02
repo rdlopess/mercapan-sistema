@@ -20,16 +20,25 @@ class AtacadaoScraper extends ScraperBase {
       Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     };
 
-    // Seletores CSS em ordem de prioridade (ajustar apos inspecionar o site real)
+    // Seletores CSS em ordem de prioridade
+    // Atacadao usa Next.js — prioridade para seletores VTEX IO / Next commerce
     this.seletoresPreco = [
+      // VTEX IO (plataforma comum do Atacadao/Carrefour)
+      '[class*="sellingPrice"]',
+      '[class*="SellingPrice"]',
+      '[class*="selling-price"]',
+      '[class*="bestPrice"]',
       '[class*="priceContainer"] [class*="price"]',
       '[class*="ProductCard"] [class*="price"]',
       '[data-testid="price-box"] [class*="integer"]',
-      '[class*="selling-price"]',
       '[class*="product-price"]',
       'span[class*="Price"]',
       '.price',
       '[class*="preco"]',
+      // Next.js / generico
+      '[class*="price_selling"]',
+      '[class*="price__selling"]',
+      '[class*="offerPrice"]',
     ];
   }
 
@@ -92,9 +101,11 @@ class AtacadaoScraper extends ScraperBase {
     const page = await context.newPage();
 
     try {
-      await page.goto(url, { waitUntil: 'networkidle', timeout: 25000 });
+      // Next.js SSR + hydration: espera rede estabilizar
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 });
+      await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
       // Aguarda possivel carregamento assincrono de precos
-      await page.waitForTimeout(2500);
+      await page.waitForTimeout(3000);
 
       let preco = null;
       for (const seletor of this.seletoresPreco) {
