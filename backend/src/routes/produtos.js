@@ -39,9 +39,10 @@ router.post('/', async (req, res) => {
     if (!nome || !categoria) {
       return res.status(400).json({ error: 'nome e categoria são obrigatórios' });
     }
+    const codigoFinal = codigo && codigo.trim() !== '' ? codigo.trim() : null;
     const { data, error } = await supabase
       .from('produtos')
-      .insert([{ codigo, nome, categoria, unidade: unidade || 'UN', ativo: ativo !== false }])
+      .insert([{ codigo: codigoFinal, nome, categoria, unidade: unidade || 'UN', ativo: ativo !== false }])
       .select()
       .single();
     if (error) throw error;
@@ -55,9 +56,10 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const { codigo, nome, categoria, unidade, ativo } = req.body;
+    const codigoFinal = codigo && codigo.trim() !== '' ? codigo.trim() : null;
     const { data, error } = await supabase
       .from('produtos')
-      .update({ codigo, nome, categoria, unidade, ativo })
+      .update({ codigo: codigoFinal, nome, categoria, unidade, ativo })
       .eq('id', req.params.id)
       .select()
       .single();
