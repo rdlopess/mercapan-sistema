@@ -32,6 +32,26 @@ router.get('/:id', async (req, res) => {
   }
 });
 
+// Gera próximo código automático no formato P001, P002, ...
+async function gerarCodigoAutomatico() {
+  const { data } = await supabase
+    .from('produtos')
+    .select('codigo')
+    .like('codigo', 'P%');
+
+  let maiorNumero = 0;
+  (data || []).forEach(({ codigo }) => {
+    const match = codigo && codigo.match(/^P(\d+)$/);
+    if (match) {
+      const num = parseInt(match[1], 10);
+      if (num > maiorNumero) maiorNumero = num;
+    }
+  });
+
+  const proximo = maiorNumero + 1;
+  return 'P' + String(proximo).padStart(3, '0');
+}
+
 // POST /api/produtos
 router.post('/', async (req, res) => {
   try {
@@ -39,7 +59,9 @@ router.post('/', async (req, res) => {
     if (!nome || !categoria) {
       return res.status(400).json({ error: 'nome e categoria são obrigatórios' });
     }
-    const codigoFinal = codigo && codigo.trim() !== '' ? codigo.trim() : null;
+    const codigoFinal = codigo && codigo.trim() !== ''
+      ? codigo.trim()
+      : await gerarCodigoAutomatico();
     const { data, error } = await supabase
       .from('produtos')
       .insert([{ codigo: codigoFinal, nome, categoria, unidade: unidade || 'UN', ativo: ativo !== false }])
