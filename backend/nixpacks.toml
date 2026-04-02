@@ -1,9 +1,14 @@
 # Nixpacks configuration for Railway
-# The postinstall script in package.json installs Playwright + Chromium
+# Playwright Chromium e instalado explicitamente no build
 
 [phases.setup]
 nixPkgs = ["nodejs_20"]
 
-# Variaveis necessarias para o Playwright rodar headless em producao
+[phases.install]
+cmds = [
+  "npm ci",
+  "npx playwright install --with-deps chromium"
+]
+
 [variables]
 PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "0"

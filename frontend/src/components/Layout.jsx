@@ -4,11 +4,17 @@ import { Outlet, NavLink, useLocation } from 'react-router-dom';
 const navGroups = [
   {
     items: [
-      { to: '/dashboard', label: 'Dashboard', icon: '⬛' },
-      { to: '/produtos',  label: 'Produtos',  icon: '📦' },
+      { to: '/dashboard',    label: 'Dashboard',    icon: '⬛' },
+      { to: '/produtos',     label: 'Produtos',     icon: '📦' },
       { to: '/fornecedores', label: 'Fornecedores', icon: '🏭' },
-      { to: '/cotacao',   label: 'Cotacao',   icon: '📊' },
-      { to: '/catalogo',  label: 'Catalogo',  icon: '📋' },
+      { to: '/cotacao',      label: 'Cotação',      icon: '📊' },
+      { to: '/catalogo',     label: 'Catálogo',     icon: '📋' },
+    ],
+  },
+  {
+    title: 'Marketing',
+    items: [
+      { to: '/fotos-produtos', label: 'Fotos Produtos', icon: '📷' },
     ],
   },
   {
@@ -19,7 +25,7 @@ const navGroups = [
     ],
   },
   {
-    title: 'Configuracoes',
+    title: 'Configurações',
     items: [
       { to: '/margens', label: 'Margens', icon: '💹' },
     ],
@@ -40,15 +46,14 @@ export default function Layout() {
         className="bg-navy-600 text-white flex flex-col flex-shrink-0 transition-all duration-300"
       >
         {/* Logo */}
-        <div className="flex items-center gap-3 px-3 py-4 border-b border-navy-500">
-          <div className="w-9 h-9 bg-gold-500 rounded-xl flex items-center justify-center flex-shrink-0 font-bold text-white text-lg">
-            M
-          </div>
+        <div className="flex items-center gap-3 px-3 py-3 border-b border-navy-500">
+          <img
+            src="/logo.png"
+            alt="Mercapan"
+            className={`object-contain flex-shrink-0 transition-all duration-300 ${collapsed ? 'h-8 w-8' : 'h-11 w-auto'}`}
+          />
           {!collapsed && (
-            <div className="min-w-0">
-              <p className="font-bold text-white text-sm leading-tight">Mercapan</p>
-              <p className="text-navy-300 text-xs">Distribuidora</p>
-            </div>
+            <div className="min-w-0" />
           )}
           <button
             onClick={() => setCollapsed(c => !c)}

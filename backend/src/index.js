@@ -1,4 +1,5 @@
-require('dotenv').config();
+// Carrega .env do diretorio do backend, independente do CWD do processo
+require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
 const express = require('express');
 const cors = require('cors');
 
@@ -11,6 +12,7 @@ const clientesRoutes = require('./routes/clientes');
 const pedidosRoutes = require('./routes/pedidos');
 const scraperRoutes = require('./routes/scraper');
 const cotacaoRoutes = require('./routes/cotacao');
+const materiaisRoutes = require('./routes/materiais');
 
 // Agendador de tarefas
 require('./scheduler');
@@ -55,6 +57,7 @@ app.use('/api/clientes', clientesRoutes);
 app.use('/api/pedidos', pedidosRoutes);
 app.use('/api/scraper', scraperRoutes);
 app.use('/api/cotacao', cotacaoRoutes);
+app.use('/api/materiais', materiaisRoutes);
 
 // 404
 app.use((req, res) => {
