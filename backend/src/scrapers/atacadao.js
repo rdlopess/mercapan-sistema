@@ -34,7 +34,7 @@ class AtacadaoScraper extends ScraperBase {
   }
 
   montarUrlBusca(produto) {
-    return `${this.urlBase}/search?q=${encodeURIComponent(produto)}&sort=price_asc`;
+    return `${this.urlBase}/s/?q=${encodeURIComponent(produto)}`;
   }
 
   /**

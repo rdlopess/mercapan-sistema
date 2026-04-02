@@ -90,21 +90,8 @@ class VendiZapScraper extends ScraperBase {
       }
     }
 
-    // Ultimo recurso: busca generica por texto com "R$" na pagina
-    try {
-      const textosPagina = await page.locator('*:not(script):not(style)').allTextContents();
-      const precos = textosPagina
-        .filter(t => t.includes('R$') || /\d+,\d{2}/.test(t))
-        .map(t => this.normalizarPreco(t))
-        .filter(p => p !== null && p > 0.5 && p < 50000);
-
-      if (precos.length > 0) {
-        const menorPreco = Math.min(...precos);
-        this.log(`Preco encontrado via busca generica: R$ ${menorPreco}`);
-        return menorPreco;
-      }
-    } catch (_) {}
-
+    // Nota: busca generica removida — retornava o menor preco do catalogo inteiro,
+    // causando o mesmo preco para todos os produtos pesquisados (falso positivo).
     return null;
   }
 

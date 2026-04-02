@@ -9,7 +9,7 @@ const vendizapScraper = require('./vendizap');
  * Adicione novos fornecedores aqui ao expandir o sistema.
  */
 const SCRAPERS = {
-  'Atacadao':      atacadaoScraper,
+  'Atacadão':      atacadaoScraper,
   'Slap Comercial': slapScraper,
   'Metta':         vendizapScraper,
 };
