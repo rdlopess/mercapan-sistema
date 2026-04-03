@@ -1,45 +1,28 @@
-const axios = require('axios');
-const cheerio = require('cheerio');
 const { chromium } = require('playwright');
 const ScraperBase = require('./base');
 
 /**
  * Scraper do Atacadao.
- * Estrategia primaria: axios + cheerio (HTML estatico, mais rapido).
- * Fallback automatico: Playwright headless (contorna bloqueios e JS).
+ *
+ * O site usa Next.js com hidratacao client-side, entao Playwright e obrigatorio.
+ *
+ * Estrutura DOM confirmada via inspecao real (2026-04):
+ *   - Cards de produto: <article>
+ *   - Nome do produto:  article a[class*="after:content"]  (link com overlay)
+ *   - Preco principal:  article p.text-lg                  (ex: "R$ 19,39")
+ *   - Preco unitario:   article p.text-sm                  (ex: "R$ 19,89")
+ *   - URL de busca:     /s/?q=<termo>
+ *
+ * Estrategia: percorre os cards, verifica se o nome contem o produto buscado,
+ * e retorna o menor preco entre os cards correspondentes.
  */
 class AtacadaoScraper extends ScraperBase {
   constructor() {
-    super('Atacadao', 'https://www.atacadao.com.br');
+    super('Atacadão', 'https://www.atacadao.com.br');
 
-    this.headers = {
-      'User-Agent':
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-        '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8',
-      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-    };
-
-    // Seletores CSS em ordem de prioridade
-    // Atacadao usa Next.js — prioridade para seletores VTEX IO / Next commerce
-    this.seletoresPreco = [
-      // VTEX IO (plataforma comum do Atacadao/Carrefour)
-      '[class*="sellingPrice"]',
-      '[class*="SellingPrice"]',
-      '[class*="selling-price"]',
-      '[class*="bestPrice"]',
-      '[class*="priceContainer"] [class*="price"]',
-      '[class*="ProductCard"] [class*="price"]',
-      '[data-testid="price-box"] [class*="integer"]',
-      '[class*="product-price"]',
-      'span[class*="Price"]',
-      '.price',
-      '[class*="preco"]',
-      // Next.js / generico
-      '[class*="price_selling"]',
-      '[class*="price__selling"]',
-      '[class*="offerPrice"]',
-    ];
+    this.userAgent =
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+      '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
   }
 
   montarUrlBusca(produto) {
@@ -47,113 +30,113 @@ class AtacadaoScraper extends ScraperBase {
   }
 
   /**
-   * Extrai o menor preco de uma pagina HTML (string) usando cheerio.
+   * Verifica se o texto do card contem o produto buscado
+   * (compara as primeiras palavras significativas).
    */
-  _extrairPrecoHtml(html) {
-    const $ = cheerio.load(html);
+  _cardContemProduto(nomeCard, nomeProduto) {
+    const cardLower = nomeCard.toLowerCase();
+    const palavras = nomeProduto
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(p => p.length > 2);
+    if (palavras.length === 0) return false;
+    return palavras.some(p => cardLower.includes(p));
+  }
 
-    for (const seletor of this.seletoresPreco) {
-      const elemento = $(seletor).first();
-      if (elemento.length) {
-        const texto = elemento.text().trim();
-        const preco = this.normalizarPreco(texto);
-        if (preco) {
-          this.log(`Preco encontrado via cheerio (${seletor}): R$ ${preco}`);
-          return preco;
-        }
+  /**
+   * Extrai precos dos cards que correspondem ao produto buscado.
+   * Usa seletores confirmados via inspecao real do DOM.
+   */
+  async _extrairPrecoEspecifico(page, nomeProduto) {
+    try {
+      const cards = await page.locator('article').all();
+      this.log(`${cards.length} card(s) encontrado(s) na pagina`);
+
+      const precos = [];
+
+      for (const card of cards.slice(0, 20)) {
+        try {
+          // Pega o nome do produto no card (link com overlay "after:content")
+          const nomeEl = card.locator('a[class*="after\\:content"]').first();
+          const nomeCard = await nomeEl.textContent({ timeout: 2000 }).catch(() => '');
+
+          if (!nomeCard || !this._cardContemProduto(nomeCard, nomeProduto)) continue;
+
+          // Pega o preco principal (p.text-lg = preco de atacado)
+          const precoEl = card.locator('p.text-lg').first();
+          const precoTxt = await precoEl.textContent({ timeout: 2000 }).catch(() => '');
+          const preco = this.normalizarPreco(precoTxt);
+
+          if (preco) {
+            this.log(`Card "${nomeCard.substring(0, 40)}" → R$ ${preco}`);
+            precos.push(preco);
+          }
+        } catch (_) {}
       }
+
+      if (precos.length > 0) {
+        const menor = Math.min(...precos);
+        this.log(`Menor preco para "${nomeProduto}": R$ ${menor}`);
+        return menor;
+      }
+    } catch (err) {
+      this.warn(`Erro ao extrair precos: ${err.message}`);
     }
+
     return null;
   }
 
   /**
-   * Tentativa primaria: axios + cheerio (rapido, sem browser).
-   */
-  async _tentarComAxios(url) {
-    this.log('Tentando com axios + cheerio...');
-    const { data: html } = await axios.get(url, {
-      headers: this.headers,
-      timeout: 12000,
-    });
-
-    // Detecta possivel bloqueio (CAPTCHA ou pagina vazia)
-    if (
-      html.toLowerCase().includes('captcha') ||
-      html.toLowerCase().includes('robot') ||
-      html.length < 1000
-    ) {
-      throw new Error('Possivel bloqueio detectado (captcha/conteudo insuficiente)');
-    }
-
-    return this._extrairPrecoHtml(html);
-  }
-
-  /**
-   * Fallback: Playwright headless (lento, mas contorna JS e bloqueios).
-   */
-  async _tentarComPlaywright(url) {
-    this.log('Fallback: usando Playwright headless...');
-    const browser = await chromium.launch({ headless: true });
-    const context = await browser.newContext({
-      userAgent: this.headers['User-Agent'],
-      locale: 'pt-BR',
-    });
-    const page = await context.newPage();
-
-    try {
-      // Next.js SSR + hydration: espera rede estabilizar
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 });
-      await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
-      // Aguarda possivel carregamento assincrono de precos
-      await page.waitForTimeout(3000);
-
-      let preco = null;
-      for (const seletor of this.seletoresPreco) {
-        try {
-          const texto = await page
-            .locator(seletor)
-            .first()
-            .textContent({ timeout: 3000 });
-          preco = this.normalizarPreco(texto);
-          if (preco) {
-            this.log(`Preco encontrado via Playwright (${seletor}): R$ ${preco}`);
-            break;
-          }
-        } catch (_) {
-          // seletor nao encontrado, tenta o proximo
-        }
-      }
-      return preco;
-    } finally {
-      await browser.close();
-    }
-  }
-
-  /**
-   * Busca o preco de um produto no Atacadao.
-   * @param {string} produto - Nome do produto
+   * Busca o preco de um produto no Atacadao via Playwright.
+   * @param {string} produto
    * @returns {{ preco: number|null, encontrado: boolean, url: string }}
    */
   async buscarPreco(produto) {
     const url = this.montarUrlBusca(produto);
     this.log(`Buscando: "${produto}"`);
 
+    const browser = await chromium.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    });
+
+    const context = await browser.newContext({
+      userAgent: this.userAgent,
+      locale: 'pt-BR',
+      viewport: { width: 1280, height: 800 },
+    });
+
     let preco = null;
 
-    // 1a tentativa: axios + cheerio
     try {
-      preco = await this._tentarComAxios(url);
-    } catch (err) {
-      this.warn(`Axios falhou (${err.message}). Ativando Playwright como fallback.`);
-    }
+      const page = await context.newPage();
 
-    // Fallback: Playwright
-    if (preco === null) {
-      try {
-        preco = await this._tentarComPlaywright(url);
-      } catch (err) {
-        this.erro(`Playwright tambem falhou: ${err.message}`);
+      // Bloqueia recursos desnecessarios para acelerar
+      await page.route('**/*.{png,jpg,jpeg,gif,svg,woff,woff2,ttf,eot}', route =>
+        route.abort()
+      );
+
+      this.log(`Acessando: ${url}`);
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+
+      // Aguarda Next.js hidratar e renderizar os cards
+      await page.waitForSelector('article', { timeout: 15000 }).catch(() => {});
+      await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+      await page.waitForTimeout(2000);
+
+      preco = await this._extrairPrecoEspecifico(page, produto);
+
+      // Se nao achou, tenta scroll e nova tentativa
+      if (preco === null) {
+        this.log('Tentando scroll para carregar lazy content...');
+        await page.evaluate(() => window.scrollTo(0, 600));
+        await page.waitForTimeout(2000);
+        preco = await this._extrairPrecoEspecifico(page, produto);
       }
+    } catch (err) {
+      this.erro(`Erro ao acessar o site: ${err.message}`);
+    } finally {
+      await browser.close();
     }
 
     if (preco === null) {
@@ -164,5 +147,4 @@ class AtacadaoScraper extends ScraperBase {
   }
 }
 
-// Exporta instancia unica (singleton)
 module.exports = new AtacadaoScraper();

@@ -1,128 +1,152 @@
-const axios = require('axios');
-const cheerio = require('cheerio');
+const { chromium } = require('playwright');
 const ScraperBase = require('./base');
 
 /**
  * Scraper da Slap Comercial (slapcomercial.com.br).
  *
- * O site usa HTML renderizado no servidor (SSR/PHP tradicional),
- * tornando axios + cheerio suficiente na maioria dos casos.
+ * O site usa Angular (framework detectado: tags vip-* e ng-star-inserted),
+ * portanto Playwright e obrigatorio — axios/cheerio nao funcionam.
  *
- * Estrutura identificada no slapcomercial.com.br:
- *   - Pagina de busca: /busca?busca=<termo>
- *   - Cards de produto: div.product-item ou li.product-item
- *   - Preco: span.product-price, .price, [class*="preco"]
- *   - Nome: h2.product-name ou .product-title
+ * Estrutura DOM confirmada via inspecao real (2026-04):
+ *   - Cards de produto:  .vip-card-produto
+ *   - Nome do produto:   span.vip-card-produto-descricao  (dentro do card)
+ *   - Preco promocional: span.medio.font-bold             (preco final com desconto)
+ *   - Preco original:    span.medio                       (sem font-bold = sem desconto)
+ *   - URL de busca:      /busca?busca=<termo>
+ *
+ * Estrategia: percorre os cards, verifica se o nome contem o produto buscado,
+ * e retorna o menor preco entre os cards correspondentes.
  */
 class SlapScraper extends ScraperBase {
   constructor() {
     super('Slap Comercial', 'https://www.slapcomercial.com.br');
 
-    this.headers = {
-      'User-Agent':
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-        '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Accept-Language': 'pt-BR,pt;q=0.9',
-      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      Referer: 'https://www.slapcomercial.com.br/',
-    };
+    this.userAgent =
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+      '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+  }
 
-    // Seletores em ordem de prioridade (mais especifico → mais generico)
-    this.seletoresPreco = [
-      '.product-price',
-      '.preco-por',
-      '.price-box .price',
-      '[class*="product"] [class*="price"]',
-      '[class*="preco"]',
-      '[class*="valor"]',
-      'span.price',
-      '.price',
-    ];
-
-    // Possiveis formatos de URL de busca do site
-    this.urlsBusca = [
-      (q) => `${this.urlBase}/busca?busca=${encodeURIComponent(q)}`,
-      (q) => `${this.urlBase}/busca?q=${encodeURIComponent(q)}`,
-      (q) => `${this.urlBase}/pesquisa?termo=${encodeURIComponent(q)}`,
-    ];
+  montarUrlBusca(produto) {
+    return `${this.urlBase}/busca?busca=${encodeURIComponent(produto)}`;
   }
 
   /**
-   * Tenta cada formato de URL de busca ate encontrar resultados.
+   * Verifica se o nome do card contem o produto buscado.
    */
-  async _tentarUrls(produto) {
-    for (const montarUrl of this.urlsBusca) {
-      const url = montarUrl(produto);
-      try {
-        this.log(`Tentando URL: ${url}`);
-        const { data: html, status } = await axios.get(url, {
-          headers: this.headers,
-          timeout: 12000,
-          maxRedirects: 5,
-        });
-
-        if (status !== 200 || html.length < 500) continue;
-
-        const preco = this._extrairPreco(html);
-        if (preco) {
-          return { preco, url };
-        }
-
-        // Mesmo sem preco, retorna a URL que funcionou para log
-        this.warn(`URL funcionou mas nao encontrou preco: ${url}`);
-        return { preco: null, url };
-      } catch (err) {
-        this.warn(`URL falhou (${url}): ${err.message}`);
-      }
-    }
-    return { preco: null, url: this.urlsBusca[0](produto) };
+  _cardContemProduto(nomeCard, nomeProduto) {
+    const cardLower = nomeCard.toLowerCase();
+    const palavras = nomeProduto
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(p => p.length > 2);
+    if (palavras.length === 0) return false;
+    return palavras.some(p => cardLower.includes(p));
   }
 
   /**
-   * Extrai o preco de uma pagina HTML usando multiplos seletores.
+   * Extrai precos dos cards que correspondem ao produto buscado.
+   * Usa seletores confirmados via inspecao real do DOM.
    */
-  _extrairPreco(html) {
-    const $ = cheerio.load(html);
+  async _extrairPrecoEspecifico(page, nomeProduto) {
+    try {
+      const cards = await page.locator('.vip-card-produto').all();
+      this.log(`${cards.length} card(s) encontrado(s) na pagina`);
 
-    // Verifica se ha produtos na pagina (evita falsos positivos)
-    const temProdutos =
-      $('[class*="product"]').length > 0 ||
-      $('[class*="item"]').length > 0 ||
-      $('[class*="resultado"]').length > 0;
+      if (cards.length === 0) return null;
 
-    if (!temProdutos) {
-      this.warn('Nenhum produto encontrado na pagina de resultados');
-      return null;
-    }
-
-    for (const seletor of this.seletoresPreco) {
-      // Pega todos os elementos e ordena pelo menor preco
       const precos = [];
-      $(seletor).each((_, el) => {
-        const texto = $(el).text().trim();
-        const preco = this.normalizarPreco(texto);
-        if (preco) precos.push(preco);
-      });
+
+      for (const card of cards.slice(0, 30)) {
+        try {
+          // Pega o nome do produto no card
+          const nomeEl = card.locator('span.vip-card-produto-descricao').first();
+          const nomeCard = await nomeEl.textContent({ timeout: 2000 }).catch(() => '');
+
+          if (!nomeCard || !this._cardContemProduto(nomeCard, nomeProduto)) continue;
+
+          // Pega o preco promocional (span.medio.font-bold) — preco final com desconto
+          // Fallback: span.medio (preco sem desconto)
+          let precoTxt = '';
+          const precoPromo = card.locator('span.medio.font-bold').first();
+          if (await precoPromo.count() > 0) {
+            precoTxt = await precoPromo.textContent({ timeout: 2000 }).catch(() => '');
+          }
+          if (!precoTxt) {
+            const precoNormal = card.locator('span.medio').first();
+            precoTxt = await precoNormal.textContent({ timeout: 2000 }).catch(() => '');
+          }
+
+          const preco = this.normalizarPreco(precoTxt);
+          if (preco) {
+            this.log(`Card "${nomeCard.substring(0, 40)}" → R$ ${preco}`);
+            precos.push(preco);
+          }
+        } catch (_) {}
+      }
 
       if (precos.length > 0) {
-        const menorPreco = Math.min(...precos);
-        this.log(`${precos.length} preco(s) encontrado(s) via "${seletor}". Menor: R$ ${menorPreco}`);
-        return menorPreco;
+        const menor = Math.min(...precos);
+        this.log(`Menor preco para "${nomeProduto}": R$ ${menor}`);
+        return menor;
       }
+    } catch (err) {
+      this.warn(`Erro ao extrair precos: ${err.message}`);
     }
 
     return null;
   }
 
   /**
-   * Busca o preco de um produto na Slap Comercial.
+   * Busca o preco de um produto na Slap Comercial via Playwright.
    * @param {string} produto
    * @returns {{ preco: number|null, encontrado: boolean, url: string }}
    */
   async buscarPreco(produto) {
+    const url = this.montarUrlBusca(produto);
     this.log(`Buscando: "${produto}"`);
 
-    const { preco, url } = await this._tentarUrls(produto);
+    const browser = await chromium.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    });
+
+    const context = await browser.newContext({
+      userAgent: this.userAgent,
+      locale: 'pt-BR',
+      viewport: { width: 1280, height: 800 },
+    });
+
+    let preco = null;
+
+    try {
+      const page = await context.newPage();
+
+      // Bloqueia recursos desnecessarios para acelerar
+      await page.route('**/*.{png,jpg,jpeg,gif,svg,woff,woff2,ttf,eot}', route =>
+        route.abort()
+      );
+
+      this.log(`Acessando: ${url}`);
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+
+      // Aguarda Angular renderizar os cards
+      await page.waitForSelector('.vip-card-produto', { timeout: 15000 }).catch(() => {});
+      await page.waitForTimeout(2000);
+
+      preco = await this._extrairPrecoEspecifico(page, produto);
+
+      // Se nao achou, tenta scroll e nova tentativa
+      if (preco === null) {
+        this.log('Tentando scroll para carregar lazy content...');
+        await page.evaluate(() => window.scrollTo(0, 600));
+        await page.waitForTimeout(2000);
+        preco = await this._extrairPrecoEspecifico(page, produto);
+      }
+    } catch (err) {
+      this.erro(`Erro ao acessar o site: ${err.message}`);
+    } finally {
+      await browser.close();
+    }
 
     if (preco === null) {
       this.warn(`Preco nao encontrado para "${produto}"`);
