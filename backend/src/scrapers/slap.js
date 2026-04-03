@@ -27,7 +27,8 @@ class SlapScraper extends ScraperBase {
   }
 
   montarUrlBusca(produto) {
-    return `${this.urlBase}/busca?busca=${encodeURIComponent(produto)}`;
+    // Parametro correto confirmado: ?termo= (nao ?busca= que retorna zero resultados)
+    return `${this.urlBase}/busca?termo=${encodeURIComponent(produto)}`;
   }
 
   /**
